@@ -8,21 +8,31 @@ import {
   ScrollView,
   Alert,
   SafeAreaView,
+  Modal,
+  Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 const AddScheduleScreen = ({navigation}) => {
   const [schedules, setSchedules] = useState([
     {
       hospitalName: '',
       hospitalAddress: '',
-      consultationDay: 'Saturday',
+      consultationDays: ['Saturday'], // Feature #7: Array for multi-day
       timeStart: '',
       timeEnd: '',
+      timeStartDate: null,
+      timeEndDate: null,
       maxPatients: '',
     },
   ]);
   const [emergencyContact, setEmergencyContact] = useState('');
+
+  // Feature #8: Time picker state
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [activeTimeField, setActiveTimeField] = useState(null); // {index, field}
+  const [tempTime, setTempTime] = useState(new Date());
 
   const days = [
     'Monday',
@@ -40,9 +50,11 @@ const AddScheduleScreen = ({navigation}) => {
       {
         hospitalName: '',
         hospitalAddress: '',
-        consultationDay: 'Saturday',
+        consultationDays: ['Saturday'],
         timeStart: '',
         timeEnd: '',
+        timeStartDate: null,
+        timeEndDate: null,
         maxPatients: '',
       },
     ]);
@@ -63,8 +75,84 @@ const AddScheduleScreen = ({navigation}) => {
     setSchedules(newSchedules);
   };
 
+  // Feature #7: Toggle day selection (multi-select)
+  const handleToggleDay = (index, day) => {
+    const newSchedules = [...schedules];
+    const currentDays = newSchedules[index].consultationDays;
+
+    if (currentDays.includes(day)) {
+      // Remove day (but keep at least one)
+      if (currentDays.length === 1) {
+        Alert.alert('Error', 'At least one day must be selected');
+        return;
+      }
+      newSchedules[index].consultationDays = currentDays.filter(d => d !== day);
+    } else {
+      newSchedules[index].consultationDays = [...currentDays, day];
+    }
+    setSchedules(newSchedules);
+  };
+
+  // Feature #8: Format time from Date object
+  const formatTime = date => {
+    if (!date) return '';
+    let hours = date.getHours();
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    return `${hours.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+  };
+
+  // Feature #8: Open time picker
+  const openTimePicker = (index, field) => {
+    const schedule = schedules[index];
+    const existingDate =
+      field === 'timeStart' ? schedule.timeStartDate : schedule.timeEndDate;
+    setTempTime(existingDate || new Date());
+    setActiveTimeField({index, field});
+    setShowTimePicker(true);
+  };
+
+  // Feature #8: Handle time picker change
+  const handleTimeChange = (event, selectedTime) => {
+    if (Platform.OS === 'android') {
+      setShowTimePicker(false);
+    }
+
+    if (event.type === 'dismissed') {
+      setShowTimePicker(false);
+      return;
+    }
+
+    if (selectedTime && activeTimeField) {
+      const {index, field} = activeTimeField;
+      const formattedTime = formatTime(selectedTime);
+      const newSchedules = [...schedules];
+
+      if (field === 'timeStart') {
+        newSchedules[index].timeStart = formattedTime;
+        newSchedules[index].timeStartDate = selectedTime;
+      } else {
+        newSchedules[index].timeEnd = formattedTime;
+        newSchedules[index].timeEndDate = selectedTime;
+      }
+
+      setSchedules(newSchedules);
+      setTempTime(selectedTime);
+
+      if (Platform.OS === 'android') {
+        setActiveTimeField(null);
+      }
+    }
+  };
+
+  const handleConfirmTimePicker = () => {
+    setShowTimePicker(false);
+    setActiveTimeField(null);
+  };
+
   const handleSave = async () => {
-    // Validation
     for (let i = 0; i < schedules.length; i++) {
       const sch = schedules[i];
       if (
@@ -75,6 +163,13 @@ const AddScheduleScreen = ({navigation}) => {
         !sch.maxPatients
       ) {
         Alert.alert('Error', `Please fill all fields for schedule ${i + 1}`);
+        return;
+      }
+      if (sch.consultationDays.length === 0) {
+        Alert.alert(
+          'Error',
+          `Please select at least one day for schedule ${i + 1}`,
+        );
         return;
       }
     }
@@ -90,19 +185,29 @@ const AddScheduleScreen = ({navigation}) => {
         ? JSON.parse(existingSchedulesData)
         : [];
 
-      const newSchedules = schedules.map(sch => ({
-        id: 'SCH' + Date.now() + Math.random().toString(36).substr(2, 9),
-        doctorId: currentDoctor.id,
-        hospitalName: sch.hospitalName,
-        hospitalAddress: sch.hospitalAddress,
-        consultationDay: sch.consultationDay,
-        timeStart: sch.timeStart,
-        timeEnd: sch.timeEnd,
-        maxPatients: parseInt(sch.maxPatients),
-        currentBookings: 0,
-        emergencyContact: emergencyContact,
-        createdAt: new Date().toISOString(),
-      }));
+      // Feature #7: Create one schedule per selected day
+      const newSchedules = [];
+      schedules.forEach(sch => {
+        sch.consultationDays.forEach(day => {
+          newSchedules.push({
+            id:
+              'SCH' +
+              Date.now() +
+              Math.random().toString(36).substr(2, 9),
+            doctorId: currentDoctor.id,
+            doctorName: currentDoctor.fullName,
+            hospitalName: sch.hospitalName,
+            hospitalAddress: sch.hospitalAddress,
+            consultationDay: day,
+            timeStart: sch.timeStart,
+            timeEnd: sch.timeEnd,
+            maxPatients: parseInt(sch.maxPatients),
+            currentBookings: 0,
+            emergencyContact: emergencyContact,
+            createdAt: new Date().toISOString(),
+          });
+        });
+      });
 
       const allSchedules = [...existingSchedules, ...newSchedules];
       await AsyncStorage.setItem(
@@ -110,12 +215,17 @@ const AddScheduleScreen = ({navigation}) => {
         JSON.stringify(allSchedules),
       );
 
-      Alert.alert('Success', 'Schedules created successfully!', [
-        {
-          text: 'OK',
-          onPress: () => navigation.goBack(),
-        },
-      ]);
+      const totalCreated = newSchedules.length;
+      Alert.alert(
+        'Success',
+        `${totalCreated} schedule slot${totalCreated > 1 ? 's' : ''} created successfully!`,
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ],
+      );
     } catch (error) {
       Alert.alert('Error', 'Failed to create schedules');
     }
@@ -167,53 +277,75 @@ const AddScheduleScreen = ({navigation}) => {
               />
             </View>
 
+            {/* Feature #7: Multi-day selection with checkboxes */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Consultation Day *</Text>
+              <Text style={styles.label}>
+                Consultation Days * (select multiple)
+              </Text>
               <View style={styles.daySelector}>
-                {days.map(day => (
-                  <TouchableOpacity
-                    key={day}
-                    style={[
-                      styles.dayButton,
-                      schedule.consultationDay === day && styles.dayButtonSelected,
-                    ]}
-                    onPress={() =>
-                      handleUpdateSlot(index, 'consultationDay', day)
-                    }>
-                    <Text
+                {days.map(day => {
+                  const isSelected =
+                    schedule.consultationDays.includes(day);
+                  return (
+                    <TouchableOpacity
+                      key={day}
                       style={[
-                        styles.dayButtonText,
-                        schedule.consultationDay === day &&
-                          styles.dayButtonTextSelected,
-                      ]}>
-                      {day.substr(0, 3)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                        styles.dayButton,
+                        isSelected && styles.dayButtonSelected,
+                      ]}
+                      onPress={() => handleToggleDay(index, day)}>
+                      <Text
+                        style={[
+                          styles.dayButtonText,
+                          isSelected && styles.dayButtonTextSelected,
+                        ]}>
+                        {day.substr(0, 3)}
+                      </Text>
+                      {isSelected && (
+                        <Text style={styles.checkmark}> ✓</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
+              <Text style={styles.selectedDaysText}>
+                Selected:{' '}
+                {schedule.consultationDays
+                  .map(d => d.substr(0, 3))
+                  .join(', ')}
+              </Text>
             </View>
 
+            {/* Feature #8: Interactive time pickers */}
             <View style={styles.timeRow}>
               <View style={[styles.inputGroup, {flex: 1}]}>
                 <Text style={styles.label}>Start Time *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="09:00 AM"
-                  value={schedule.timeStart}
-                  onChangeText={text =>
-                    handleUpdateSlot(index, 'timeStart', text)
-                  }
-                />
+                <TouchableOpacity
+                  style={styles.timePickerButton}
+                  onPress={() => openTimePicker(index, 'timeStart')}>
+                  <Text
+                    style={[
+                      styles.timePickerText,
+                      !schedule.timeStart && styles.timePlaceholder,
+                    ]}>
+                    {schedule.timeStart || '🕐 Select'}
+                  </Text>
+                </TouchableOpacity>
               </View>
 
               <View style={[styles.inputGroup, {flex: 1}]}>
                 <Text style={styles.label}>End Time *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="01:00 PM"
-                  value={schedule.timeEnd}
-                  onChangeText={text => handleUpdateSlot(index, 'timeEnd', text)}
-                />
+                <TouchableOpacity
+                  style={styles.timePickerButton}
+                  onPress={() => openTimePicker(index, 'timeEnd')}>
+                  <Text
+                    style={[
+                      styles.timePickerText,
+                      !schedule.timeEnd && styles.timePlaceholder,
+                    ]}>
+                    {schedule.timeEnd || '🕐 Select'}
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -231,6 +363,47 @@ const AddScheduleScreen = ({navigation}) => {
             </View>
           </View>
         ))}
+
+        {/* Feature #8: Time Picker (Android native, iOS modal) */}
+        {showTimePicker && Platform.OS === 'android' && (
+          <DateTimePicker
+            value={tempTime}
+            mode="time"
+            is24Hour={false}
+            display="default"
+            onChange={handleTimeChange}
+          />
+        )}
+
+        {/* iOS time picker modal */}
+        {showTimePicker && Platform.OS === 'ios' && (
+          <Modal transparent animationType="slide">
+            <View style={styles.timeModalOverlay}>
+              <View style={styles.timeModalContent}>
+                <Text style={styles.timeModalTitle}>
+                  Select{' '}
+                  {activeTimeField?.field === 'timeStart'
+                    ? 'Start'
+                    : 'End'}{' '}
+                  Time
+                </Text>
+                <DateTimePicker
+                  value={tempTime}
+                  mode="time"
+                  is24Hour={false}
+                  display="spinner"
+                  onChange={handleTimeChange}
+                  style={styles.iosTimePicker}
+                />
+                <TouchableOpacity
+                  style={styles.timeModalDone}
+                  onPress={handleConfirmTimePicker}>
+                  <Text style={styles.timeModalDoneText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+        )}
 
         <TouchableOpacity style={styles.addSlotButton} onPress={handleAddSlot}>
           <Text style={styles.addSlotButtonText}>+ Add Another Time Slot</Text>
@@ -332,6 +505,7 @@ const styles = StyleSheet.create({
     minHeight: 60,
     paddingTop: 12,
   },
+  // Feature #7: Multi-day selector
   daySelector: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -344,6 +518,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 2,
     borderColor: '#e0e0e0',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   dayButtonSelected: {
     backgroundColor: '#667eea',
@@ -357,9 +533,71 @@ const styles = StyleSheet.create({
   dayButtonTextSelected: {
     color: '#fff',
   },
+  checkmark: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  selectedDaysText: {
+    fontSize: 12,
+    color: '#667eea',
+    marginTop: 8,
+    fontWeight: '600',
+  },
+  // Feature #8: Time picker styles
   timeRow: {
     flexDirection: 'row',
     gap: 10,
+  },
+  timePickerButton: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#667eea',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+  },
+  timePickerText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#667eea',
+  },
+  timePlaceholder: {
+    color: '#999',
+  },
+  timeModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  timeModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  timeModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  iosTimePicker: {
+    height: 200,
+  },
+  timeModalDone: {
+    backgroundColor: '#667eea',
+    borderRadius: 10,
+    padding: 15,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  timeModalDoneText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   addSlotButton: {
     backgroundColor: '#fff',

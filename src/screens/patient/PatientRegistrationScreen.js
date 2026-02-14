@@ -18,6 +18,7 @@ const PatientRegistrationScreen = ({navigation}) => {
     fullName: '',
     dateOfBirth: null,
     age: '',
+    ageDetailed: '',
     sex: 'Male',
     phone: '',
     password: '',
@@ -25,31 +26,54 @@ const PatientRegistrationScreen = ({navigation}) => {
   });
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const calculateAge = date => {
+  // Feature #1: Detailed age calculation (years, months, days)
+  const calculateDetailedAge = date => {
     const today = new Date();
     const birthDate = new Date(date);
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
 
-    if (
-      monthDiff < 0 ||
-      (monthDiff === 0 && today.getDate() < birthDate.getDate())
-    ) {
-      age--;
+    let years = today.getFullYear() - birthDate.getFullYear();
+    let months = today.getMonth() - birthDate.getMonth();
+    let days = today.getDate() - birthDate.getDate();
+
+    if (days < 0) {
+      months--;
+      // Get last day of previous month
+      const lastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+      days += lastMonth.getDate();
     }
 
-    return age;
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+
+    const parts = [];
+    if (years > 0) {
+      parts.push(`${years} year${years !== 1 ? 's' : ''}`);
+    }
+    if (months > 0) {
+      parts.push(`${months} month${months !== 1 ? 's' : ''}`);
+    }
+    if (days > 0) {
+      parts.push(`${days} day${days !== 1 ? 's' : ''}`);
+    }
+
+    return {
+      years,
+      detailed: parts.length > 0 ? parts.join(' ') : '0 days',
+    };
   };
 
   const handleDateChange = (event, selectedDate) => {
     setShowDatePicker(Platform.OS === 'ios');
 
     if (selectedDate) {
-      const age = calculateAge(selectedDate);
+      const ageInfo = calculateDetailedAge(selectedDate);
       setFormData({
         ...formData,
         dateOfBirth: selectedDate,
-        age: age.toString(),
+        age: ageInfo.years.toString(),
+        ageDetailed: ageInfo.detailed,
       });
     }
   };
@@ -61,13 +85,11 @@ const PatientRegistrationScreen = ({navigation}) => {
   };
 
   const validatePhone = phone => {
-    // Must be 11 digits and start with 01
     const phoneRegex = /^01\d{9}$/;
     return phoneRegex.test(phone);
   };
 
   const validatePassword = password => {
-    // 4-6 characters, alphanumeric
     if (password.length < 4 || password.length > 6) {
       return false;
     }
@@ -83,8 +105,19 @@ const PatientRegistrationScreen = ({navigation}) => {
     return `PAT${year}-${random}`;
   };
 
+  // Feature #2: Check phone number uniqueness
+  const isPhoneUnique = async phone => {
+    try {
+      const patientsData = await AsyncStorage.getItem('patients');
+      if (!patientsData) return true;
+      const patients = JSON.parse(patientsData);
+      return !patients.some(p => p.phone === phone);
+    } catch {
+      return true;
+    }
+  };
+
   const handleRegister = async () => {
-    // Validation
     if (
       !formData.fullName ||
       !formData.dateOfBirth ||
@@ -104,6 +137,16 @@ const PatientRegistrationScreen = ({navigation}) => {
       return;
     }
 
+    // Feature #2: Phone uniqueness check
+    const phoneUnique = await isPhoneUnique(formData.phone);
+    if (!phoneUnique) {
+      Alert.alert(
+        'Phone Already Registered',
+        'This phone number is already registered. Please use a different phone number or login with your existing account.',
+      );
+      return;
+    }
+
     if (!validatePassword(formData.password)) {
       Alert.alert(
         'Invalid Password',
@@ -119,6 +162,7 @@ const PatientRegistrationScreen = ({navigation}) => {
         fullName: formData.fullName,
         dateOfBirth: formData.dateOfBirth.toLocaleDateString(),
         age: formData.age,
+        ageDetailed: formData.ageDetailed,
         sex: formData.sex,
         phone: formData.phone,
         password: formData.password,
@@ -173,8 +217,9 @@ const PatientRegistrationScreen = ({navigation}) => {
             onPress={() => setShowDatePicker(true)}>
             <Text style={styles.dateButtonText}>{formatDate(formData.dateOfBirth)}</Text>
           </TouchableOpacity>
-          {formData.age !== '' && (
-            <Text style={styles.ageText}>Age: {formData.age} years (auto-calculated)</Text>
+          {/* Feature #1: Detailed age display */}
+          {formData.ageDetailed !== '' && (
+            <Text style={styles.ageText}>Age: {formData.ageDetailed} (auto-calculated)</Text>
           )}
         </View>
 
@@ -337,9 +382,10 @@ const styles = StyleSheet.create({
     color: '#667eea',
   },
   ageText: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 13,
+    color: '#4caf50',
     marginTop: 5,
+    fontWeight: '600',
   },
   hint: {
     fontSize: 12,

@@ -18,10 +18,9 @@ const ConsultationNotesScreen = ({navigation, route}) => {
   const [clinicalNotes, setClinicalNotes] = useState('');
   const [diagnosis, setDiagnosis] = useState('');
   const [prescriptionPhotos, setPrescriptionPhotos] = useState([]);
-  const [existingConsultations, setExistingConsultations] = useState({
-    firstVisit: null,
-    finalVisit: null,
-  });
+  const [allConsultations, setAllConsultations] = useState([]);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     loadExistingConsultations();
@@ -32,18 +31,19 @@ const ConsultationNotesScreen = ({navigation, route}) => {
       const consultationsData = await AsyncStorage.getItem('consultations');
       if (consultationsData) {
         const consultations = JSON.parse(consultationsData);
-        const patientConsultations = consultations.filter(
-          c => c.patientId === patientId,
-        );
+        const patientConsultations = consultations
+          .filter(c => c.patientId === patientId)
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-        const firstVisit = patientConsultations.find(
-          c => c.consultationStage === 'First Visit',
-        );
-        const finalVisit = patientConsultations.find(
-          c => c.consultationStage === 'Final Visit',
-        );
+        setAllConsultations(patientConsultations);
 
-        setExistingConsultations({firstVisit, finalVisit});
+        // Check if latest consultation is completed (Final Visit marked complete)
+        const completedFinal = patientConsultations.find(
+          c => c.consultationStage === 'Final Visit' && c.isCompleted,
+        );
+        if (completedFinal) {
+          setIsCompleted(true);
+        }
       }
     } catch (error) {
       console.error('Error loading consultations:', error);
@@ -58,9 +58,7 @@ const ConsultationNotesScreen = ({navigation, route}) => {
     };
 
     launchImageLibrary(options, response => {
-      if (response.didCancel) {
-        return;
-      }
+      if (response.didCancel) return;
       if (response.errorCode) {
         Alert.alert('Error', 'Failed to select image');
         return;
@@ -77,43 +75,82 @@ const ConsultationNotesScreen = ({navigation, route}) => {
     setPrescriptionPhotos(newPhotos);
   };
 
+  // Feature #5 & #6: Save consultation (supports multiple follow-ups)
   const handleSave = async () => {
     if (!clinicalNotes) {
       Alert.alert('Error', 'Please add clinical notes');
       return;
     }
 
+    if (isSaving) return;
+    setIsSaving(true);
+
     try {
+      // Feature #5: Use actual current date/time
       const currentDate = new Date().toLocaleDateString('en-US', {
         weekday: 'short',
         year: 'numeric',
         month: 'short',
         day: 'numeric',
       });
+      const currentTime = new Date().toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      // Feature #6: Determine visit number for follow-ups
+      let visitNumber = 1;
+      if (consultationStage === 'Follow-up Visit') {
+        const followUps = allConsultations.filter(
+          c => c.consultationStage === 'Follow-up Visit',
+        );
+        visitNumber = followUps.length + 1;
+      }
 
       const consultation = {
         id: 'CONSULT' + Date.now(),
         patientId: patientId,
         consultationStage: consultationStage,
+        visitNumber: visitNumber,
         clinicalNotes: clinicalNotes,
         diagnosis: diagnosis,
         prescriptionPhotos: prescriptionPhotos,
         consultationDate: currentDate,
+        consultationTime: currentTime,
+        isCompleted: false,
         createdAt: new Date().toISOString(),
       };
 
       const consultationsData = await AsyncStorage.getItem('consultations');
-      let consultations = consultationsData ? JSON.parse(consultationsData) : [];
+      let consultations = consultationsData
+        ? JSON.parse(consultationsData)
+        : [];
 
-      // Remove existing consultation of same stage for this patient
-      consultations = consultations.filter(
-        c =>
-          !(
-            c.patientId === patientId &&
-            c.consultationStage === consultationStage
-          ),
-      );
+      // For First Visit, replace existing if not completed
+      if (consultationStage === 'First Visit') {
+        consultations = consultations.filter(
+          c =>
+            !(
+              c.patientId === patientId &&
+              c.consultationStage === 'First Visit' &&
+              !c.isCompleted
+            ),
+        );
+      }
 
+      // For Final Visit, replace existing if not completed
+      if (consultationStage === 'Final Visit') {
+        consultations = consultations.filter(
+          c =>
+            !(
+              c.patientId === patientId &&
+              c.consultationStage === 'Final Visit' &&
+              !c.isCompleted
+            ),
+        );
+      }
+
+      // Feature #6: Follow-up visits always create new entries
       consultations.push(consultation);
       await AsyncStorage.setItem(
         'consultations',
@@ -122,38 +159,119 @@ const ConsultationNotesScreen = ({navigation, route}) => {
 
       Alert.alert(
         'Success',
-        `${consultationStage} notes saved successfully!`,
+        `${consultationStage}${
+          consultationStage === 'Follow-up Visit'
+            ? ` #${visitNumber}`
+            : ''
+        } notes saved successfully!`,
         [
           {
             text: 'OK',
-            onPress: () => navigation.goBack(),
+            onPress: () => {
+              loadExistingConsultations();
+              setClinicalNotes('');
+              setDiagnosis('');
+              setPrescriptionPhotos([]);
+            },
           },
         ],
       );
     } catch (error) {
       Alert.alert('Error', 'Failed to save consultation notes');
+    } finally {
+      setIsSaving(false);
     }
   };
 
+  // Feature #5: Mark as Complete locks the visit
   const handleMarkComplete = async () => {
+    if (!clinicalNotes) {
+      Alert.alert('Error', 'Please add clinical notes before marking complete');
+      return;
+    }
+
     Alert.alert(
       'Mark as Complete',
-      'Are you sure you want to mark this consultation as complete?',
+      'This will save the notes and lock this consultation. You won\'t be able to edit it after. Continue?',
       [
         {text: 'Cancel', style: 'cancel'},
         {
           text: 'Yes, Complete',
           onPress: async () => {
-            await handleSave();
-            // Update appointment status
             try {
+              const currentDate = new Date().toLocaleDateString('en-US', {
+                weekday: 'short',
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              });
+              const currentTime = new Date().toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+
+              let visitNumber = 1;
+              if (consultationStage === 'Follow-up Visit') {
+                const followUps = allConsultations.filter(
+                  c => c.consultationStage === 'Follow-up Visit',
+                );
+                visitNumber = followUps.length + 1;
+              }
+
+              const consultation = {
+                id: 'CONSULT' + Date.now(),
+                patientId: patientId,
+                consultationStage: consultationStage,
+                visitNumber: visitNumber,
+                clinicalNotes: clinicalNotes,
+                diagnosis: diagnosis,
+                prescriptionPhotos: prescriptionPhotos,
+                consultationDate: currentDate,
+                consultationTime: currentTime,
+                isCompleted: true,
+                completedAt: new Date().toISOString(),
+                createdAt: new Date().toISOString(),
+              };
+
+              const consultationsData = await AsyncStorage.getItem(
+                'consultations',
+              );
+              let consultations = consultationsData
+                ? JSON.parse(consultationsData)
+                : [];
+
+              // Remove draft of same stage
+              if (
+                consultationStage === 'First Visit' ||
+                consultationStage === 'Final Visit'
+              ) {
+                consultations = consultations.filter(
+                  c =>
+                    !(
+                      c.patientId === patientId &&
+                      c.consultationStage === consultationStage &&
+                      !c.isCompleted
+                    ),
+                );
+              }
+
+              consultations.push(consultation);
+              await AsyncStorage.setItem(
+                'consultations',
+                JSON.stringify(consultations),
+              );
+
+              // Update appointment status
               const appointmentsData = await AsyncStorage.getItem(
                 'appointments',
               );
               if (appointmentsData) {
                 const appointments = JSON.parse(appointmentsData);
                 const updatedAppointments = appointments.map(apt => {
-                  if (apt.patientId === patientId) {
+                  if (
+                    apt.patientId === patientId &&
+                    apt.status === 'pending'
+                  ) {
                     return {...apt, status: 'completed'};
                   }
                   return apt;
@@ -163,13 +281,32 @@ const ConsultationNotesScreen = ({navigation, route}) => {
                   JSON.stringify(updatedAppointments),
                 );
               }
+
+              Alert.alert(
+                'Consultation Complete',
+                'Notes saved and consultation marked as complete.',
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => navigation.goBack(),
+                  },
+                ],
+              );
             } catch (error) {
-              console.error('Error updating appointment:', error);
+              Alert.alert('Error', 'Failed to complete consultation');
             }
           },
         },
       ],
     );
+  };
+
+  // Feature #6: Get visit type label
+  const getVisitLabel = consultation => {
+    if (consultation.consultationStage === 'Follow-up Visit') {
+      return `Follow-up Visit #${consultation.visitNumber || ''}`;
+    }
+    return consultation.consultationStage;
   };
 
   return (
@@ -178,31 +315,62 @@ const ConsultationNotesScreen = ({navigation, route}) => {
         <Text style={styles.headerText}>Consultation Notes</Text>
         <Text style={styles.subHeaderText}>Patient ID: {patientId}</Text>
 
-        {/* Show existing consultations summary */}
-        {(existingConsultations.firstVisit ||
-          existingConsultations.finalVisit) && (
+        {/* Feature #6: Show all existing consultations chronologically */}
+        {allConsultations.length > 0 && (
           <View style={styles.existingBox}>
-            <Text style={styles.existingTitle}>Existing Consultations:</Text>
-            {existingConsultations.firstVisit && (
-              <Text style={styles.existingText}>
-                ✓ First Visit - {existingConsultations.firstVisit.consultationDate}
-              </Text>
-            )}
-            {existingConsultations.finalVisit && (
-              <Text style={styles.existingText}>
-                ✓ Final Visit - {existingConsultations.finalVisit.consultationDate}
-              </Text>
-            )}
+            <Text style={styles.existingTitle}>
+              Visit History ({allConsultations.length} visit
+              {allConsultations.length !== 1 ? 's' : ''})
+            </Text>
+            {allConsultations.map((c, idx) => (
+              <View key={c.id || idx} style={styles.visitHistoryItem}>
+                <View style={styles.visitHistoryHeader}>
+                  <Text style={styles.visitHistoryType}>
+                    {c.isCompleted ? '✓' : '○'} {getVisitLabel(c)}
+                  </Text>
+                  <Text style={styles.visitHistoryDate}>
+                    {c.consultationDate}
+                    {c.consultationTime ? ` ${c.consultationTime}` : ''}
+                  </Text>
+                </View>
+                {c.diagnosis ? (
+                  <Text style={styles.visitHistoryDiagnosis}>
+                    Dx: {c.diagnosis}
+                  </Text>
+                ) : null}
+                <Text
+                  style={[
+                    styles.visitHistoryStatus,
+                    c.isCompleted
+                      ? styles.statusCompleted
+                      : styles.statusDraft,
+                  ]}>
+                  {c.isCompleted ? 'Completed' : 'Draft'}
+                </Text>
+              </View>
+            ))}
           </View>
         )}
 
+        {/* Feature #5: Prevent new entries if completed */}
+        {isCompleted && (
+          <View style={styles.completedNotice}>
+            <Text style={styles.completedNoticeText}>
+              This patient's consultation cycle is complete. You can still add
+              Follow-up Visit notes for future visits.
+            </Text>
+          </View>
+        )}
+
+        {/* Feature #6: Consultation stage selection with Follow-up */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Consultation Stage</Text>
           <View style={styles.stageButtons}>
             <TouchableOpacity
               style={[
                 styles.stageButton,
-                consultationStage === 'First Visit' && styles.stageButtonSelected,
+                consultationStage === 'First Visit' &&
+                  styles.stageButtonSelected,
               ]}
               onPress={() => setConsultationStage('First Visit')}>
               <Text
@@ -215,10 +383,29 @@ const ConsultationNotesScreen = ({navigation, route}) => {
               </Text>
             </TouchableOpacity>
 
+            {/* Feature #6: Follow-up Visit option */}
             <TouchableOpacity
               style={[
                 styles.stageButton,
-                consultationStage === 'Final Visit' && styles.stageButtonSelected,
+                consultationStage === 'Follow-up Visit' &&
+                  styles.stageButtonSelected,
+              ]}
+              onPress={() => setConsultationStage('Follow-up Visit')}>
+              <Text
+                style={[
+                  styles.stageButtonText,
+                  consultationStage === 'Follow-up Visit' &&
+                    styles.stageButtonTextSelected,
+                ]}>
+                Follow-up
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.stageButton,
+                consultationStage === 'Final Visit' &&
+                  styles.stageButtonSelected,
               ]}
               onPress={() => setConsultationStage('Final Visit')}>
               <Text
@@ -285,25 +472,30 @@ const ConsultationNotesScreen = ({navigation, route}) => {
         </View>
 
         <TouchableOpacity
-          style={styles.saveButton}
+          style={[styles.saveButton, isSaving && styles.buttonDisabled]}
           onPress={handleSave}
-          activeOpacity={0.8}>
+          activeOpacity={0.8}
+          disabled={isSaving}>
           <Text style={styles.saveButtonText}>
             Save {consultationStage} Notes
           </Text>
         </TouchableOpacity>
 
+        {/* Feature #5: Mark Complete button */}
         <TouchableOpacity
-          style={styles.completeButton}
+          style={[styles.completeButton]}
           onPress={handleMarkComplete}
           activeOpacity={0.8}>
-          <Text style={styles.completeButtonText}>Mark as Complete</Text>
+          <Text style={styles.completeButtonText}>
+            Save & Mark as Complete
+          </Text>
         </TouchableOpacity>
 
         <View style={styles.infoBox}>
           <Text style={styles.infoText}>
-            ℹ️ Both First Visit and Final Visit will be saved separately and
-            can be compared side-by-side in patient history
+            ℹ️ First Visit and Final Visit can be saved once each.
+            Follow-up Visits create separate entries for each visit over time.
+            "Mark as Complete" locks the consultation permanently.
           </Text>
         </View>
       </ScrollView>
@@ -340,15 +532,67 @@ const styles = StyleSheet.create({
     borderLeftColor: '#4caf50',
   },
   existingTitle: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#2e7d32',
+    marginBottom: 12,
+  },
+  visitHistoryItem: {
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 8,
     marginBottom: 8,
   },
-  existingText: {
-    fontSize: 13,
+  visitHistoryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  visitHistoryType: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  visitHistoryDate: {
+    fontSize: 12,
+    color: '#666',
+  },
+  visitHistoryDiagnosis: {
+    fontSize: 12,
+    color: '#555',
+    fontStyle: 'italic',
+    marginBottom: 4,
+  },
+  visitHistoryStatus: {
+    fontSize: 11,
+    fontWeight: '600',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  statusCompleted: {
+    backgroundColor: '#c8e6c9',
     color: '#2e7d32',
-    marginBottom: 3,
+  },
+  statusDraft: {
+    backgroundColor: '#fff3cd',
+    color: '#856404',
+  },
+  completedNotice: {
+    backgroundColor: '#e3f2fd',
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#2196f3',
+  },
+  completedNoticeText: {
+    fontSize: 13,
+    color: '#1976d2',
+    lineHeight: 20,
   },
   inputGroup: {
     marginBottom: 20,
@@ -361,12 +605,12 @@ const styles = StyleSheet.create({
   },
   stageButtons: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
   stageButton: {
     flex: 1,
     paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     borderRadius: 10,
     backgroundColor: '#fff',
     borderWidth: 2,
@@ -378,7 +622,7 @@ const styles = StyleSheet.create({
     borderColor: '#667eea',
   },
   stageButtonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#666',
   },
@@ -463,6 +707,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   completeButton: {
     backgroundColor: '#fff',

@@ -16,23 +16,26 @@ const BookingConfirmationScreen = ({navigation, route}) => {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.confirmationBox}>
           <View style={styles.checkIcon}>
-            <Text style={styles.checkIconText}>✓</Text>
+            <Text style={styles.checkIconText}>✔</Text>
           </View>
           <Text style={styles.confirmationText}>
-            Your appointment is booked with <Text style={styles.bold}>Dr. Sarah Wilson</Text> on{' '}
-            <Text style={styles.bold}>{appointment.appointmentDate}</Text> at{' '}
+            Your appointment is booked with{' '}
+            <Text style={styles.bold}>
+              {appointment.doctorName || 'Doctor'}
+            </Text>{' '}
+            on <Text style={styles.bold}>{appointment.appointmentDate}</Text> at{' '}
             <Text style={styles.bold}>{appointment.appointmentTime}</Text>.
             {'\n\n'}
-            <Text style={styles.bold}>Schedule:</Text> Every {schedule.consultationDay},{' '}
-            {schedule.timeStart} - {schedule.timeEnd}
+            <Text style={styles.bold}>Schedule:</Text> Every{' '}
+            {schedule.consultationDay}, {schedule.timeStart} - {schedule.timeEnd}
             {'\n'}
             <Text style={styles.bold}>Location:</Text> {schedule.hospitalName}
             {'\n\n'}
-            Please reach hospital at least 15 minutes prior to appointment time for
-            completing the pre-consultation formalities.
+            Please reach hospital at least 15 minutes prior to appointment time
+            for completing the pre-consultation formalities.
             {'\n\n'}
-            Please remember that same day report evaluation time takes an average
-            of 2 hours. So have patience.
+            Please remember that same day report evaluation time takes an
+            average of 2 hours. So have patience.
           </Text>
           <View style={styles.regNumber}>
             <Text style={styles.regNumberText}>
@@ -122,10 +125,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15,
     shadowColor: '#667eea',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
+    shadowOffset: {width: 0, height: 4},
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,

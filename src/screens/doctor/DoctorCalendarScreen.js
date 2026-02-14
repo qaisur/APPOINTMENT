@@ -19,6 +19,13 @@ const DoctorCalendarScreen = ({navigation}) => {
     loadAppointments();
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadAppointments();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
   const loadAppointments = async () => {
     try {
       const currentDoctorData = await AsyncStorage.getItem('currentDoctor');
@@ -27,6 +34,7 @@ const DoctorCalendarScreen = ({navigation}) => {
       const appointmentsData = await AsyncStorage.getItem('appointments');
       if (appointmentsData) {
         const allAppointments = JSON.parse(appointmentsData);
+        // Feature #10: Only this doctor's appointments
         const doctorAppointments = allAppointments.filter(
           apt => apt.doctorId === currentDoctor.id,
         );
@@ -35,12 +43,17 @@ const DoctorCalendarScreen = ({navigation}) => {
         // Create marked dates
         const marked = {};
         doctorAppointments.forEach(apt => {
-          const dateKey = convertToDateKey(apt.appointmentDate);
-          marked[dateKey] = {marked: true, dotColor: '#667eea'};
+          if (apt.status !== 'cancelled') {
+            const dateKey = convertToDateKey(apt.appointmentDate);
+            if (dateKey) {
+              const existing = marked[dateKey];
+              const count = existing ? (existing.count || 1) + 1 : 1;
+              marked[dateKey] = {marked: true, dotColor: '#667eea', count};
+            }
+          }
         });
         setMarkedDates(marked);
 
-        // Set today as selected
         const today = new Date().toISOString().split('T')[0];
         setSelectedDate(today);
       }
@@ -50,9 +63,13 @@ const DoctorCalendarScreen = ({navigation}) => {
   };
 
   const convertToDateKey = dateString => {
-    // Convert "Feb 15, 2026" to "2026-02-15"
-    const date = new Date(dateString);
-    return date.toISOString().split('T')[0];
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return null;
+      return date.toISOString().split('T')[0];
+    } catch {
+      return null;
+    }
   };
 
   const getAppointmentsForDate = date => {
@@ -61,7 +78,9 @@ const DoctorCalendarScreen = ({navigation}) => {
       day: 'numeric',
       year: 'numeric',
     });
-    return appointments.filter(apt => apt.appointmentDate === dateString);
+    return appointments.filter(
+      apt => apt.appointmentDate === dateString && apt.status !== 'cancelled',
+    );
   };
 
   const selectedDateAppointments = selectedDate
@@ -91,7 +110,16 @@ const DoctorCalendarScreen = ({navigation}) => {
 
         <View style={styles.appointmentsSection}>
           <Text style={styles.sectionTitle}>
-            Appointments on {new Date(selectedDate).toLocaleDateString()}
+            Appointments on{' '}
+            {selectedDate
+              ? new Date(selectedDate).toLocaleDateString('en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                })
+              : '...'}
+            {selectedDateAppointments.length > 0 &&
+              ` (${selectedDateAppointments.length})`}
           </Text>
 
           {selectedDateAppointments.length > 0 ? (
@@ -108,12 +136,17 @@ const DoctorCalendarScreen = ({navigation}) => {
                   {apt.patientName} ({apt.patientId})
                 </Text>
                 <Text style={styles.appointmentInfo}>
-                  🏥 {apt.hospitalName}
+                  {apt.hospitalName}
                 </Text>
                 <Text style={styles.appointmentInfo}>
-                  🕐 {apt.appointmentTime}
+                  {apt.appointmentTime}
                 </Text>
-                <View style={styles.statusBadge}>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    apt.status === 'completed' && styles.statusComplete,
+                    apt.status === 'pending' && styles.statusPending,
+                  ]}>
                   <Text style={styles.statusText}>
                     {apt.status.charAt(0).toUpperCase() + apt.status.slice(1)}
                   </Text>
@@ -182,6 +215,12 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignSelf: 'flex-start',
     marginTop: 8,
+  },
+  statusPending: {
+    backgroundColor: '#fff3cd',
+  },
+  statusComplete: {
+    backgroundColor: '#d4edda',
   },
   statusText: {
     fontSize: 11,

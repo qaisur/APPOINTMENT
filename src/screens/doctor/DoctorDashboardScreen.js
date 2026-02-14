@@ -6,17 +6,15 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DoctorDashboardScreen = ({navigation}) => {
   const [doctor, setDoctor] = useState(null);
   const [todayAppointments, setTodayAppointments] = useState([]);
-  const [stats, setStats] = useState({
-    total: 0,
-    completed: 0,
-    pending: 0,
-  });
+  const [stats, setStats] = useState({total: 0, completed: 0, pending: 0});
+  const [doctorSchedules, setDoctorSchedules] = useState([]);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
@@ -32,6 +30,7 @@ const DoctorDashboardScreen = ({navigation}) => {
         const doctorData = JSON.parse(currentDoctorData);
         setDoctor(doctorData);
 
+        // Feature #10: Only show this doctor's appointments
         const appointmentsData = await AsyncStorage.getItem('appointments');
         if (appointmentsData) {
           const allAppointments = JSON.parse(appointmentsData);
@@ -42,22 +41,53 @@ const DoctorDashboardScreen = ({navigation}) => {
           });
 
           const todayApts = allAppointments.filter(
-            apt =>
-              apt.doctorId === doctorData.id && apt.appointmentDate === today,
+            apt => apt.doctorId === doctorData.id && apt.appointmentDate === today,
           );
 
           setTodayAppointments(todayApts);
           setStats({
             total: todayApts.length,
-            completed: todayApts.filter(apt => apt.status === 'completed')
-              .length,
+            completed: todayApts.filter(apt => apt.status === 'completed').length,
             pending: todayApts.filter(apt => apt.status === 'pending').length,
           });
+        }
+
+        // Feature #11: Load this doctor's schedules
+        const schedulesData = await AsyncStorage.getItem('doctorSchedules');
+        if (schedulesData) {
+          const allSchedules = JSON.parse(schedulesData);
+          const mySchedules = allSchedules.filter(s => s.doctorId === doctorData.id);
+          setDoctorSchedules(mySchedules);
         }
       }
     } catch (error) {
       console.error('Error loading data:', error);
     }
+  };
+
+  // Feature #11: Delete schedule
+  const handleDeleteSchedule = scheduleId => {
+    Alert.alert('Delete Schedule', 'Are you sure you want to delete this schedule?', [
+      {text: 'Cancel', style: 'cancel'},
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const schedulesData = await AsyncStorage.getItem('doctorSchedules');
+            if (schedulesData) {
+              const allSchedules = JSON.parse(schedulesData);
+              const updated = allSchedules.filter(s => s.id !== scheduleId);
+              await AsyncStorage.setItem('doctorSchedules', JSON.stringify(updated));
+              loadData();
+              Alert.alert('Deleted', 'Schedule has been removed.');
+            }
+          } catch (error) {
+            Alert.alert('Error', 'Failed to delete schedule');
+          }
+        },
+      },
+    ]);
   };
 
   const getStatusStyle = status => {
@@ -73,14 +103,20 @@ const DoctorDashboardScreen = ({navigation}) => {
     }
   };
 
+  // Feature #11: Group schedules by hospital
+  const groupedSchedules = doctorSchedules.reduce((acc, sch) => {
+    const key = sch.hospitalName;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(sch);
+    return acc;
+  }, {});
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <Text style={styles.welcomeText}>Welcome,</Text>
-          <Text style={styles.doctorName}>
-            {doctor?.fullName || 'Doctor'}
-          </Text>
+          <Text style={styles.doctorName}>{doctor?.fullName || 'Doctor'}</Text>
           <Text style={styles.specialization}>{doctor?.specialization}</Text>
         </View>
 
@@ -96,50 +132,67 @@ const DoctorDashboardScreen = ({navigation}) => {
         </View>
 
         <View style={styles.quickActions}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('PatientSearch')}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('PatientSearch')}>
             <Text style={styles.actionIcon}>🔍</Text>
             <Text style={styles.actionText}>Search Patient</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('DoctorProfile')}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('DoctorProfile')}>
             <Text style={styles.actionIcon}>👤</Text>
             <Text style={styles.actionText}>Profile</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('DoctorCalendar')}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('DoctorCalendar')}>
             <Text style={styles.actionIcon}>📅</Text>
             <Text style={styles.actionText}>Calendar</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.quickActions}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('AddSchedule')}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('AddSchedule')}>
             <Text style={styles.actionIcon}>➕</Text>
             <Text style={styles.actionText}>Add Schedule</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('ResetPassword')}>
-            <Text style={styles.actionIcon}>🔑</Text>
+          <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('ResetPassword')}>
+            <Text style={styles.actionIcon}>🔒</Text>
             <Text style={styles.actionText}>Reset Password</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('BlockDate')}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('BlockDate')}>
             <Text style={styles.actionIcon}>🚫</Text>
             <Text style={styles.actionText}>Block Date</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Feature #11: Schedule List */}
+        <Text style={styles.sectionTitle}>My Schedules</Text>
+        {Object.keys(groupedSchedules).length > 0 ? (
+          Object.entries(groupedSchedules).map(([hospital, schedules]) => (
+            <View key={hospital} style={styles.scheduleGroup}>
+              <Text style={styles.scheduleHospital}>{hospital}</Text>
+              {schedules.map(sch => (
+                <View key={sch.id} style={styles.scheduleItem}>
+                  <View style={styles.scheduleDetails}>
+                    <Text style={styles.scheduleDay}>{sch.consultationDay}</Text>
+                    <Text style={styles.scheduleTime}>{sch.timeStart} - {sch.timeEnd}</Text>
+                    <Text style={styles.schedulePatients}>
+                      Max: {sch.maxPatients} patients • {sch.currentBookings || 0} booked
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.deleteScheduleBtn}
+                    onPress={() => handleDeleteSchedule(sch.id)}>
+                    <Text style={styles.deleteScheduleText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          ))
+        ) : (
+          <View style={styles.emptyScheduleState}>
+            <Text style={styles.emptyScheduleText}>No schedules created yet</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('AddSchedule')}>
+              <Text style={styles.addScheduleLink}>+ Add Schedule</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <Text style={styles.sectionTitle}>Today's Schedule</Text>
 
@@ -148,18 +201,10 @@ const DoctorDashboardScreen = ({navigation}) => {
             <TouchableOpacity
               key={apt.id}
               style={styles.appointmentCard}
-              onPress={() =>
-                navigation.navigate('PatientDetails', {patientId: apt.patientId})
-              }>
-              <Text style={styles.patientName}>
-                {apt.patientName} ({apt.patientId})
-              </Text>
-              <Text style={styles.appointmentInfo}>
-                🏥 {apt.hospitalName}
-              </Text>
-              <Text style={styles.appointmentInfo}>
-                🕐 {apt.appointmentTime}
-              </Text>
+              onPress={() => navigation.navigate('PatientDetails', {patientId: apt.patientId})}>
+              <Text style={styles.patientName}>{apt.patientName} ({apt.patientId})</Text>
+              <Text style={styles.appointmentInfo}>{apt.hospitalName}</Text>
+              <Text style={styles.appointmentInfo}>{apt.appointmentTime}</Text>
               <View style={[styles.statusBadge, getStatusStyle(apt.status)]}>
                 <Text style={styles.statusText}>
                   {apt.status.charAt(0).toUpperCase() + apt.status.slice(1)}
@@ -169,9 +214,7 @@ const DoctorDashboardScreen = ({navigation}) => {
           ))
         ) : (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>
-              No appointments scheduled for today
-            </Text>
+            <Text style={styles.emptyStateText}>No appointments scheduled for today</Text>
           </View>
         )}
 
@@ -253,10 +296,7 @@ const styles = StyleSheet.create({
     padding: 15,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
@@ -277,6 +317,82 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 15,
     marginTop: 10,
+  },
+  // Feature #11: Schedule styles
+  scheduleGroup: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 15,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  scheduleHospital: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#667eea',
+    marginBottom: 10,
+  },
+  scheduleItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f8f9ff',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  scheduleDetails: {
+    flex: 1,
+  },
+  scheduleDay: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  scheduleTime: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 2,
+  },
+  schedulePatients: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 2,
+  },
+  deleteScheduleBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#ffebee',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
+  },
+  deleteScheduleText: {
+    color: '#dc3545',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  emptyScheduleState: {
+    backgroundColor: '#fff',
+    padding: 25,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  emptyScheduleText: {
+    fontSize: 14,
+    color: '#999',
+    marginBottom: 8,
+  },
+  addScheduleLink: {
+    color: '#667eea',
+    fontWeight: '600',
+    fontSize: 14,
   },
   appointmentCard: {
     backgroundColor: '#f8f9ff',

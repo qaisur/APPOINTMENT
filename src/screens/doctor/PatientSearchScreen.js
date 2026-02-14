@@ -21,6 +21,12 @@ const PatientSearchScreen = ({navigation}) => {
     }
 
     try {
+      // Feature #10: Get current doctor ID for filtering
+      const currentDoctorData = await AsyncStorage.getItem('currentDoctor');
+      const currentDoctor = currentDoctorData
+        ? JSON.parse(currentDoctorData)
+        : null;
+
       const patientsData = await AsyncStorage.getItem('patients');
       if (!patientsData) {
         setSearchResults([]);
@@ -31,12 +37,32 @@ const PatientSearchScreen = ({navigation}) => {
       const patients = JSON.parse(patientsData);
       const query = searchQuery.toLowerCase().trim();
 
-      // Search by name OR registration number
-      const results = patients.filter(
+      // First filter by name or reg number
+      let results = patients.filter(
         patient =>
           patient.fullName.toLowerCase().includes(query) ||
           patient.regNumber.toLowerCase().includes(query),
       );
+
+      // Feature #10: Filter to only show patients who have appointments with this doctor
+      if (currentDoctor) {
+        const appointmentsData = await AsyncStorage.getItem('appointments');
+        if (appointmentsData) {
+          const appointments = JSON.parse(appointmentsData);
+          const doctorPatientIds = new Set(
+            appointments
+              .filter(apt => apt.doctorId === currentDoctor.id)
+              .map(apt => apt.patientId),
+          );
+
+          results = results.filter(patient =>
+            doctorPatientIds.has(patient.regNumber),
+          );
+        } else {
+          // No appointments at all means no patients for this doctor
+          results = [];
+        }
+      }
 
       setSearchResults(results);
       setHasSearched(true);
@@ -55,7 +81,7 @@ const PatientSearchScreen = ({navigation}) => {
         <View style={styles.header}>
           <Text style={styles.headerText}>Search Patient</Text>
           <Text style={styles.subHeaderText}>
-            Search by name or registration number
+            Search by name or registration number (your patients only)
           </Text>
         </View>
 
@@ -66,6 +92,8 @@ const PatientSearchScreen = ({navigation}) => {
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCapitalize="none"
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
           />
           <TouchableOpacity
             style={styles.searchButton}
@@ -91,7 +119,10 @@ const PatientSearchScreen = ({navigation}) => {
                     activeOpacity={0.7}>
                     <View style={styles.patientHeader}>
                       <Text style={styles.patientName}>{patient.fullName}</Text>
-                      <Text style={styles.patientAge}>{patient.age} yrs</Text>
+                      <Text style={styles.patientAge}>
+                        {/* Feature #1: Show detailed age if available */}
+                        {patient.ageDetailed || `${patient.age} yrs`}
+                      </Text>
                     </View>
 
                     <View style={styles.patientInfo}>
@@ -122,7 +153,8 @@ const PatientSearchScreen = ({navigation}) => {
                 <Text style={styles.noResultsIcon}>🔍</Text>
                 <Text style={styles.noResultsText}>No patients found</Text>
                 <Text style={styles.noResultsSubtext}>
-                  Try searching with a different name or registration number
+                  Only patients with appointments under your care are shown.
+                  Try a different name or registration number.
                 </Text>
               </View>
             )}
@@ -186,10 +218,7 @@ const styles = StyleSheet.create({
     padding: 18,
     alignItems: 'center',
     shadowColor: '#667eea',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
+    shadowOffset: {width: 0, height: 4},
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
@@ -213,10 +242,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#667eea',
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
@@ -237,13 +263,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   patientAge: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: '#667eea',
     backgroundColor: '#f8f9ff',
     paddingVertical: 4,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     borderRadius: 12,
+    maxWidth: 160,
   },
   patientInfo: {
     marginBottom: 15,
