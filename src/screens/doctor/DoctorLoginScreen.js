@@ -8,15 +8,16 @@ import {
   SafeAreaView,
   ScrollView,
   Alert,
+  Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DoctorLoginScreen = ({navigation}) => {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
   const handleLogin = async () => {
-    if (!email || !password) {
+    if (!username || !password) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -26,8 +27,12 @@ const DoctorLoginScreen = ({navigation}) => {
 
       if (doctorsData) {
         const doctors = JSON.parse(doctorsData);
+        // Login by username+password OR email+password
         const doctor = doctors.find(
-          d => d.email === email && d.password === password,
+          d =>
+            (d.username === username.toLowerCase() ||
+              d.email === username.toLowerCase()) &&
+            d.password === password,
         );
 
         if (doctor) {
@@ -37,37 +42,26 @@ const DoctorLoginScreen = ({navigation}) => {
           Alert.alert('Error', 'Invalid credentials');
         }
       } else {
-        // First time - create demo account
-        const newDoctor = {
-          id: 'DOC001',
-          email: email,
-          password: password,
-          fullName: 'Dr. Sarah Wilson',
-          specialization: 'Pediatrician',
-          qualifications: 'MBBS, MD',
-          experience: '10 years',
-          photo: null,
-          specialties: [],
-          createdAt: new Date().toISOString(),
-        };
-
-        await AsyncStorage.setItem('doctors', JSON.stringify([newDoctor]));
-        await AsyncStorage.setItem('currentDoctor', JSON.stringify(newDoctor));
-
         Alert.alert(
-          'Welcome!',
-          'Account created successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.replace('DoctorDashboard'),
-            },
-          ],
+          'No Account Found',
+          'No doctor accounts exist yet. Please contact the system administrator to create your account.',
         );
       }
     } catch (error) {
       Alert.alert('Error', 'Login failed. Please try again.');
     }
+  };
+
+  const handleWhatsApp = () => {
+    Linking.openURL('https://wa.me/8801534919618').catch(() => {
+      Alert.alert('Error', 'Could not open WhatsApp');
+    });
+  };
+
+  const handleEmail = () => {
+    Linking.openURL('mailto:qaisur@gmail.com').catch(() => {
+      Alert.alert('Error', 'Could not open email app');
+    });
   };
 
   return (
@@ -83,12 +77,12 @@ const DoctorLoginScreen = ({navigation}) => {
 
         <View style={styles.formContainer}>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email Address</Text>
+            <Text style={styles.label}>Username or Email</Text>
             <TextInput
               style={styles.input}
-              placeholder="doctor@example.com"
-              value={email}
-              onChangeText={setEmail}
+              placeholder="Enter username or email"
+              value={username}
+              onChangeText={setUsername}
               autoCapitalize="none"
               keyboardType="email-address"
             />
@@ -102,6 +96,7 @@ const DoctorLoginScreen = ({navigation}) => {
               value={password}
               onChangeText={setPassword}
               secureTextEntry
+              maxLength={6}
             />
           </View>
 
@@ -111,12 +106,36 @@ const DoctorLoginScreen = ({navigation}) => {
             activeOpacity={0.8}>
             <Text style={styles.loginButtonText}>Login</Text>
           </TouchableOpacity>
+        </View>
 
-          <View style={styles.demoInfo}>
-            <Text style={styles.demoText}>
-              First time? Enter any email/password to create account
+        {/* Change #5: Contact admin info instead of demo account */}
+        <View style={styles.contactBox}>
+          <Text style={styles.contactTitle}>
+            If you are a doctor, please contact system admin
+          </Text>
+          <Text style={styles.contactName}>Dr. Qaisur Rabbi</Text>
+
+          <TouchableOpacity
+            style={styles.contactBtn}
+            onPress={handleWhatsApp}
+            activeOpacity={0.7}>
+            <Text style={styles.contactBtnText}>
+              💬 WhatsApp: +8801534919618
             </Text>
-          </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.contactBtn, styles.contactBtnEmail]}
+            onPress={handleEmail}
+            activeOpacity={0.7}>
+            <Text style={styles.contactBtnEmailText}>
+              ✉️ Email: qaisur@gmail.com
+            </Text>
+          </TouchableOpacity>
+
+          <Text style={styles.contactFooter}>
+            for username and password. Thank you.
+          </Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -135,7 +154,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 35,
   },
   avatarContainer: {
     width: 100,
@@ -160,7 +179,7 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   formContainer: {
-    marginBottom: 40,
+    marginBottom: 30,
   },
   inputGroup: {
     marginBottom: 20,
@@ -187,10 +206,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
     shadowColor: '#667eea',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
+    shadowOffset: {width: 0, height: 4},
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
@@ -200,16 +216,57 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  demoInfo: {
-    backgroundColor: '#f8f9ff',
-    borderRadius: 12,
-    padding: 15,
-    marginTop: 20,
+  // Contact admin box
+  contactBox: {
+    backgroundColor: '#fff8e1',
+    borderRadius: 15,
+    padding: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ffc107',
+    alignItems: 'center',
   },
-  demoText: {
-    fontSize: 13,
-    color: '#666',
+  contactTitle: {
+    fontSize: 14,
+    color: '#5d4037',
     textAlign: 'center',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  contactName: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 14,
+  },
+  contactBtn: {
+    backgroundColor: '#25d366',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  contactBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  contactBtnEmail: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#667eea',
+  },
+  contactBtnEmailText: {
+    color: '#667eea',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  contactFooter: {
+    fontSize: 13,
+    color: '#5d4037',
+    textAlign: 'center',
+    marginTop: 6,
   },
 });
 
