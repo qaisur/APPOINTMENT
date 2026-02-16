@@ -1,299 +1,110 @@
 import React, {useState, useEffect} from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
-  SafeAreaView,
+  View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, SafeAreaView, Modal, Image,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {launchImageLibrary} from 'react-native-image-picker';
 
 const ConsultationNotesScreen = ({navigation, route}) => {
   const {patientId} = route.params;
-  const [consultationStage, setConsultationStage] = useState('First Visit');
   const [clinicalNotes, setClinicalNotes] = useState('');
   const [diagnosis, setDiagnosis] = useState('');
   const [prescriptionPhotos, setPrescriptionPhotos] = useState([]);
   const [allConsultations, setAllConsultations] = useState([]);
-  const [isCompleted, setIsCompleted] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    loadExistingConsultations();
-  }, []);
+  // Prescription preview modal
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
+  const [previewPhotos, setPreviewPhotos] = useState([]);
+
+  useEffect(() => { loadExistingConsultations(); }, []);
 
   const loadExistingConsultations = async () => {
     try {
-      const consultationsData = await AsyncStorage.getItem('consultations');
-      if (consultationsData) {
-        const consultations = JSON.parse(consultationsData);
-        const patientConsultations = consultations
-          .filter(c => c.patientId === patientId)
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-        setAllConsultations(patientConsultations);
-
-        // Check if latest consultation is completed (Final Visit marked complete)
-        const completedFinal = patientConsultations.find(
-          c => c.consultationStage === 'Final Visit' && c.isCompleted,
+      const data = await AsyncStorage.getItem('consultations');
+      if (data) {
+        const all = JSON.parse(data);
+        setAllConsultations(
+          all.filter(c => c.patientId === patientId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
         );
-        if (completedFinal) {
-          setIsCompleted(true);
-        }
       }
     } catch (error) {
-      console.error('Error loading consultations:', error);
+      console.error('Error:', error);
     }
   };
 
   const handleSelectPhoto = () => {
-    const options = {
-      mediaType: 'photo',
-      quality: 0.8,
-      selectionLimit: 5,
-    };
-
-    launchImageLibrary(options, response => {
-      if (response.didCancel) return;
-      if (response.errorCode) {
-        Alert.alert('Error', 'Failed to select image');
-        return;
-      }
+    launchImageLibrary({mediaType: 'photo', quality: 0.8, selectionLimit: 5}, response => {
+      if (response.didCancel || response.errorCode) return;
       if (response.assets) {
-        const photos = response.assets.map(asset => asset.uri);
+        const photos = response.assets.map(a => a.uri);
         setPrescriptionPhotos([...prescriptionPhotos, ...photos]);
       }
     });
   };
 
   const handleRemovePhoto = index => {
-    const newPhotos = prescriptionPhotos.filter((_, i) => i !== index);
-    setPrescriptionPhotos(newPhotos);
+    setPrescriptionPhotos(prescriptionPhotos.filter((_, i) => i !== index));
   };
 
-  // Feature #5 & #6: Save consultation (supports multiple follow-ups)
-  const handleSave = async () => {
-    if (!clinicalNotes) {
-      Alert.alert('Error', 'Please add clinical notes');
-      return;
-    }
-
-    if (isSaving) return;
-    setIsSaving(true);
-
-    try {
-      // Feature #5: Use actual current date/time
-      const currentDate = new Date().toLocaleDateString('en-US', {
-        weekday: 'short',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
-      const currentTime = new Date().toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-
-      // Feature #6: Determine visit number for follow-ups
-      let visitNumber = 1;
-      if (consultationStage === 'Follow-up Visit') {
-        const followUps = allConsultations.filter(
-          c => c.consultationStage === 'Follow-up Visit',
-        );
-        visitNumber = followUps.length + 1;
-      }
-
-      const consultation = {
-        id: 'CONSULT' + Date.now(),
-        patientId: patientId,
-        consultationStage: consultationStage,
-        visitNumber: visitNumber,
-        clinicalNotes: clinicalNotes,
-        diagnosis: diagnosis,
-        prescriptionPhotos: prescriptionPhotos,
-        consultationDate: currentDate,
-        consultationTime: currentTime,
-        isCompleted: false,
-        createdAt: new Date().toISOString(),
-      };
-
-      const consultationsData = await AsyncStorage.getItem('consultations');
-      let consultations = consultationsData
-        ? JSON.parse(consultationsData)
-        : [];
-
-      // For First Visit, replace existing if not completed
-      if (consultationStage === 'First Visit') {
-        consultations = consultations.filter(
-          c =>
-            !(
-              c.patientId === patientId &&
-              c.consultationStage === 'First Visit' &&
-              !c.isCompleted
-            ),
-        );
-      }
-
-      // For Final Visit, replace existing if not completed
-      if (consultationStage === 'Final Visit') {
-        consultations = consultations.filter(
-          c =>
-            !(
-              c.patientId === patientId &&
-              c.consultationStage === 'Final Visit' &&
-              !c.isCompleted
-            ),
-        );
-      }
-
-      // Feature #6: Follow-up visits always create new entries
-      consultations.push(consultation);
-      await AsyncStorage.setItem(
-        'consultations',
-        JSON.stringify(consultations),
-      );
-
-      Alert.alert(
-        'Success',
-        `${consultationStage}${
-          consultationStage === 'Follow-up Visit'
-            ? ` #${visitNumber}`
-            : ''
-        } notes saved successfully!`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              loadExistingConsultations();
-              setClinicalNotes('');
-              setDiagnosis('');
-              setPrescriptionPhotos([]);
-            },
-          },
-        ],
-      );
-    } catch (error) {
-      Alert.alert('Error', 'Failed to save consultation notes');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Feature #5: Mark as Complete locks the visit
-  const handleMarkComplete = async () => {
-    if (!clinicalNotes) {
-      Alert.alert('Error', 'Please add clinical notes before marking complete');
+  // Change #3: Single "Save & Mark as Complete" handler
+  const handleSaveAndComplete = async () => {
+    if (!clinicalNotes.trim()) {
+      Alert.alert('Error', 'Please add clinical notes before saving');
       return;
     }
 
     Alert.alert(
-      'Mark as Complete',
-      'This will save the notes and lock this consultation. You won\'t be able to edit it after. Continue?',
+      'Save Consultation',
+      'This will save the notes with current date/time stamp. Continue?',
       [
         {text: 'Cancel', style: 'cancel'},
         {
-          text: 'Yes, Complete',
+          text: 'Save',
           onPress: async () => {
+            if (isSaving) return;
+            setIsSaving(true);
+
             try {
-              const currentDate = new Date().toLocaleDateString('en-US', {
-                weekday: 'short',
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-              });
-              const currentTime = new Date().toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-
-              let visitNumber = 1;
-              if (consultationStage === 'Follow-up Visit') {
-                const followUps = allConsultations.filter(
-                  c => c.consultationStage === 'Follow-up Visit',
-                );
-                visitNumber = followUps.length + 1;
-              }
-
+              const now = new Date();
               const consultation = {
                 id: 'CONSULT' + Date.now(),
-                patientId: patientId,
-                consultationStage: consultationStage,
-                visitNumber: visitNumber,
-                clinicalNotes: clinicalNotes,
-                diagnosis: diagnosis,
-                prescriptionPhotos: prescriptionPhotos,
-                consultationDate: currentDate,
-                consultationTime: currentTime,
+                patientId,
+                clinicalNotes: clinicalNotes.trim(),
+                diagnosis: diagnosis.trim(),
+                prescriptionPhotos,
+                consultationDate: now.toLocaleDateString('en-US', {weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'}),
+                consultationTime: now.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'}),
                 isCompleted: true,
-                completedAt: new Date().toISOString(),
-                createdAt: new Date().toISOString(),
+                completedAt: now.toISOString(),
+                createdAt: now.toISOString(),
               };
 
-              const consultationsData = await AsyncStorage.getItem(
-                'consultations',
-              );
-              let consultations = consultationsData
-                ? JSON.parse(consultationsData)
-                : [];
-
-              // Remove draft of same stage
-              if (
-                consultationStage === 'First Visit' ||
-                consultationStage === 'Final Visit'
-              ) {
-                consultations = consultations.filter(
-                  c =>
-                    !(
-                      c.patientId === patientId &&
-                      c.consultationStage === consultationStage &&
-                      !c.isCompleted
-                    ),
-                );
-              }
-
+              const data = await AsyncStorage.getItem('consultations');
+              let consultations = data ? JSON.parse(data) : [];
               consultations.push(consultation);
-              await AsyncStorage.setItem(
-                'consultations',
-                JSON.stringify(consultations),
-              );
+              await AsyncStorage.setItem('consultations', JSON.stringify(consultations));
 
               // Update appointment status
-              const appointmentsData = await AsyncStorage.getItem(
-                'appointments',
-              );
-              if (appointmentsData) {
-                const appointments = JSON.parse(appointmentsData);
-                const updatedAppointments = appointments.map(apt => {
-                  if (
-                    apt.patientId === patientId &&
-                    apt.status === 'pending'
-                  ) {
+              const aptsData = await AsyncStorage.getItem('appointments');
+              if (aptsData) {
+                const apts = JSON.parse(aptsData);
+                const updated = apts.map(apt => {
+                  if (apt.patientId === patientId && apt.status === 'pending') {
                     return {...apt, status: 'completed'};
                   }
                   return apt;
                 });
-                await AsyncStorage.setItem(
-                  'appointments',
-                  JSON.stringify(updatedAppointments),
-                );
+                await AsyncStorage.setItem('appointments', JSON.stringify(updated));
               }
 
-              Alert.alert(
-                'Consultation Complete',
-                'Notes saved and consultation marked as complete.',
-                [
-                  {
-                    text: 'OK',
-                    onPress: () => navigation.goBack(),
-                  },
-                ],
-              );
+              Alert.alert('Saved', 'Consultation notes saved successfully!', [
+                {text: 'OK', onPress: () => navigation.goBack()},
+              ]);
             } catch (error) {
-              Alert.alert('Error', 'Failed to complete consultation');
+              Alert.alert('Error', 'Failed to save');
+            } finally {
+              setIsSaving(false);
             }
           },
         },
@@ -301,12 +112,10 @@ const ConsultationNotesScreen = ({navigation, route}) => {
     );
   };
 
-  // Feature #6: Get visit type label
-  const getVisitLabel = consultation => {
-    if (consultation.consultationStage === 'Follow-up Visit') {
-      return `Follow-up Visit #${consultation.visitNumber || ''}`;
-    }
-    return consultation.consultationStage;
+  // Quick look prescription
+  const openPrescriptionPreview = photos => {
+    setPreviewPhotos(photos);
+    setShowPrescriptionModal(true);
   };
 
   return (
@@ -315,111 +124,50 @@ const ConsultationNotesScreen = ({navigation, route}) => {
         <Text style={styles.headerText}>Consultation Notes</Text>
         <Text style={styles.subHeaderText}>Patient ID: {patientId}</Text>
 
-        {/* Feature #6: Show all existing consultations chronologically */}
+        {/* Visit History - Change #3: Show Dx, clinical notes, prescription quick look */}
         {allConsultations.length > 0 && (
-          <View style={styles.existingBox}>
-            <Text style={styles.existingTitle}>
-              Visit History ({allConsultations.length} visit
-              {allConsultations.length !== 1 ? 's' : ''})
+          <View style={styles.historyBox}>
+            <Text style={styles.historyTitle}>
+              Visit History ({allConsultations.length} visit{allConsultations.length !== 1 ? 's' : ''})
             </Text>
             {allConsultations.map((c, idx) => (
-              <View key={c.id || idx} style={styles.visitHistoryItem}>
-                <View style={styles.visitHistoryHeader}>
-                  <Text style={styles.visitHistoryType}>
-                    {c.isCompleted ? '✓' : '○'} {getVisitLabel(c)}
+              <View key={c.id || idx} style={styles.historyItem}>
+                <View style={styles.historyHeader}>
+                  <Text style={styles.historyDate}>
+                    {c.consultationDate}{c.consultationTime ? ` ${c.consultationTime}` : ''}
                   </Text>
-                  <Text style={styles.visitHistoryDate}>
-                    {c.consultationDate}
-                    {c.consultationTime ? ` ${c.consultationTime}` : ''}
+                  <Text style={[styles.historyStatus, c.isCompleted ? styles.statusDone : styles.statusDraft]}>
+                    {c.isCompleted ? '✓ Complete' : '○ Draft'}
                   </Text>
                 </View>
+
                 {c.diagnosis ? (
-                  <Text style={styles.visitHistoryDiagnosis}>
-                    Dx: {c.diagnosis}
-                  </Text>
+                  <View style={styles.historyField}>
+                    <Text style={styles.histFieldLabel}>Dx:</Text>
+                    <Text style={styles.histFieldValue}>{c.diagnosis}</Text>
+                  </View>
                 ) : null}
-                <Text
-                  style={[
-                    styles.visitHistoryStatus,
-                    c.isCompleted
-                      ? styles.statusCompleted
-                      : styles.statusDraft,
-                  ]}>
-                  {c.isCompleted ? 'Completed' : 'Draft'}
-                </Text>
+
+                <View style={styles.historyField}>
+                  <Text style={styles.histFieldLabel}>Clinical Notes:</Text>
+                  <Text style={styles.histFieldValue} numberOfLines={3}>{c.clinicalNotes}</Text>
+                </View>
+
+                {c.prescriptionPhotos && c.prescriptionPhotos.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.viewRxBtn}
+                    onPress={() => openPrescriptionPreview(c.prescriptionPhotos)}>
+                    <Text style={styles.viewRxText}>
+                      📷 View Prescription ({c.prescriptionPhotos.length})
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ))}
           </View>
         )}
 
-        {/* Feature #5: Prevent new entries if completed */}
-        {isCompleted && (
-          <View style={styles.completedNotice}>
-            <Text style={styles.completedNoticeText}>
-              This patient's consultation cycle is complete. You can still add
-              Follow-up Visit notes for future visits.
-            </Text>
-          </View>
-        )}
-
-        {/* Feature #6: Consultation stage selection with Follow-up */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Consultation Stage</Text>
-          <View style={styles.stageButtons}>
-            <TouchableOpacity
-              style={[
-                styles.stageButton,
-                consultationStage === 'First Visit' &&
-                  styles.stageButtonSelected,
-              ]}
-              onPress={() => setConsultationStage('First Visit')}>
-              <Text
-                style={[
-                  styles.stageButtonText,
-                  consultationStage === 'First Visit' &&
-                    styles.stageButtonTextSelected,
-                ]}>
-                First Visit
-              </Text>
-            </TouchableOpacity>
-
-            {/* Feature #6: Follow-up Visit option */}
-            <TouchableOpacity
-              style={[
-                styles.stageButton,
-                consultationStage === 'Follow-up Visit' &&
-                  styles.stageButtonSelected,
-              ]}
-              onPress={() => setConsultationStage('Follow-up Visit')}>
-              <Text
-                style={[
-                  styles.stageButtonText,
-                  consultationStage === 'Follow-up Visit' &&
-                    styles.stageButtonTextSelected,
-                ]}>
-                Follow-up
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.stageButton,
-                consultationStage === 'Final Visit' &&
-                  styles.stageButtonSelected,
-              ]}
-              onPress={() => setConsultationStage('Final Visit')}>
-              <Text
-                style={[
-                  styles.stageButtonText,
-                  consultationStage === 'Final Visit' &&
-                    styles.stageButtonTextSelected,
-                ]}>
-                Final Visit
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
+        {/* Clinical Notes Input */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Clinical Notes *</Text>
           <TextInput
@@ -433,24 +181,24 @@ const ConsultationNotesScreen = ({navigation, route}) => {
           />
         </View>
 
+        {/* Diagnosis */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Diagnosis</Text>
           <TextInput
-            style={[styles.input, styles.textArea]}
+            style={[styles.input, styles.textAreaSmall]}
             placeholder="Provisional/Final diagnosis..."
             value={diagnosis}
             onChangeText={setDiagnosis}
             multiline
-            numberOfLines={4}
+            numberOfLines={3}
             textAlignVertical="top"
           />
         </View>
 
+        {/* Prescription Photos */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Prescription Photos</Text>
-          <TouchableOpacity
-            style={styles.photoUpload}
-            onPress={handleSelectPhoto}>
+          <TouchableOpacity style={styles.photoUpload} onPress={handleSelectPhoto}>
             <Text style={styles.uploadIcon}>📸</Text>
             <Text style={styles.uploadText}>Tap to upload prescription</Text>
           </TouchableOpacity>
@@ -460,9 +208,7 @@ const ConsultationNotesScreen = ({navigation, route}) => {
               {prescriptionPhotos.map((photo, index) => (
                 <View key={index} style={styles.photoItem}>
                   <Text style={styles.photoPlaceholder}>📄 {index + 1}</Text>
-                  <TouchableOpacity
-                    style={styles.removePhotoButton}
-                    onPress={() => handleRemovePhoto(index)}>
+                  <TouchableOpacity style={styles.removePhotoBtn} onPress={() => handleRemovePhoto(index)}>
                     <Text style={styles.removePhotoText}>✕</Text>
                   </TouchableOpacity>
                 </View>
@@ -471,272 +217,98 @@ const ConsultationNotesScreen = ({navigation, route}) => {
           )}
         </View>
 
+        {/* Change #3: Single save button only */}
         <TouchableOpacity
           style={[styles.saveButton, isSaving && styles.buttonDisabled]}
-          onPress={handleSave}
+          onPress={handleSaveAndComplete}
           activeOpacity={0.8}
           disabled={isSaving}>
-          <Text style={styles.saveButtonText}>
-            Save {consultationStage} Notes
-          </Text>
-        </TouchableOpacity>
-
-        {/* Feature #5: Mark Complete button */}
-        <TouchableOpacity
-          style={[styles.completeButton]}
-          onPress={handleMarkComplete}
-          activeOpacity={0.8}>
-          <Text style={styles.completeButtonText}>
-            Save & Mark as Complete
-          </Text>
+          <Text style={styles.saveButtonText}>Save & Mark as Complete</Text>
         </TouchableOpacity>
 
         <View style={styles.infoBox}>
           <Text style={styles.infoText}>
-            ℹ️ First Visit and Final Visit can be saved once each.
-            Follow-up Visits create separate entries for each visit over time.
-            "Mark as Complete" locks the consultation permanently.
+            Each consultation is saved as a separate entry with date/time stamp.
+            Clinical notes, diagnosis, and prescription photos will all be recorded.
           </Text>
         </View>
       </ScrollView>
+
+      {/* Prescription Preview Modal */}
+      <Modal visible={showPrescriptionModal} animationType="slide">
+        <SafeAreaView style={styles.previewModal}>
+          <View style={styles.previewHeader}>
+            <Text style={styles.previewTitle}>Prescription Photos</Text>
+            <TouchableOpacity onPress={() => setShowPrescriptionModal(false)}>
+              <Text style={styles.previewClose}>✕ Close</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.previewBody}>
+            {previewPhotos.map((photo, idx) => (
+              <View key={idx} style={styles.previewItem}>
+                <Text style={styles.previewLabel}>Photo {idx + 1}</Text>
+                <Image source={{uri: photo}} style={styles.previewImage} resizeMode="contain" />
+              </View>
+            ))}
+            {previewPhotos.length === 0 && (
+              <Text style={styles.noPhotosText}>No prescription photos available</Text>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  headerText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 5,
-  },
-  subHeaderText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 20,
-  },
-  existingBox: {
-    backgroundColor: '#e8f5e9',
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4caf50',
-  },
-  existingTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#2e7d32',
-    marginBottom: 12,
-  },
-  visitHistoryItem: {
-    backgroundColor: '#fff',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  visitHistoryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  visitHistoryType: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  visitHistoryDate: {
-    fontSize: 12,
-    color: '#666',
-  },
-  visitHistoryDiagnosis: {
-    fontSize: 12,
-    color: '#555',
-    fontStyle: 'italic',
-    marginBottom: 4,
-  },
-  visitHistoryStatus: {
-    fontSize: 11,
-    fontWeight: '600',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  statusCompleted: {
-    backgroundColor: '#c8e6c9',
-    color: '#2e7d32',
-  },
-  statusDraft: {
-    backgroundColor: '#fff3cd',
-    color: '#856404',
-  },
-  completedNotice: {
-    backgroundColor: '#e3f2fd',
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#2196f3',
-  },
-  completedNoticeText: {
-    fontSize: 13,
-    color: '#1976d2',
-    lineHeight: 20,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  stageButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  stageButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    alignItems: 'center',
-  },
-  stageButtonSelected: {
-    backgroundColor: '#667eea',
-    borderColor: '#667eea',
-  },
-  stageButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666',
-  },
-  stageButtonTextSelected: {
-    color: '#fff',
-  },
-  input: {
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    borderRadius: 12,
-    padding: 15,
-    fontSize: 15,
-    color: '#333',
-  },
-  textArea: {
-    minHeight: 120,
-    paddingTop: 15,
-  },
-  photoUpload: {
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: '#667eea',
-    borderRadius: 15,
-    padding: 30,
-    alignItems: 'center',
-    backgroundColor: '#f8f9ff',
-  },
-  uploadIcon: {
-    fontSize: 40,
-    marginBottom: 10,
-  },
-  uploadText: {
-    color: '#667eea',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  photoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 15,
-  },
-  photoItem: {
-    width: 100,
-    height: 100,
-    borderRadius: 10,
-    backgroundColor: '#667eea',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  photoPlaceholder: {
-    fontSize: 16,
-    color: '#fff',
-    fontWeight: '600',
-  },
-  removePhotoButton: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#dc3545',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  removePhotoText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  saveButton: {
-    backgroundColor: '#667eea',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  completeButton: {
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#4caf50',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  completeButtonText: {
-    color: '#4caf50',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  infoBox: {
-    backgroundColor: '#fff3cd',
-    borderRadius: 12,
-    padding: 15,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ffc107',
-  },
-  infoText: {
-    fontSize: 13,
-    color: '#856404',
-    lineHeight: 20,
-  },
+  container: {flex: 1, backgroundColor: '#f5f7fa'},
+  scrollContent: {padding: 20, paddingBottom: 40},
+  headerText: {fontSize: 24, fontWeight: 'bold', color: '#333', marginBottom: 5},
+  subHeaderText: {fontSize: 14, color: '#666', marginBottom: 20},
+  // Visit History
+  historyBox: {backgroundColor: '#e8f5e9', padding: 15, borderRadius: 12, marginBottom: 20, borderLeftWidth: 4, borderLeftColor: '#4caf50'},
+  historyTitle: {fontSize: 15, fontWeight: '700', color: '#2e7d32', marginBottom: 12},
+  historyItem: {backgroundColor: '#fff', padding: 12, borderRadius: 8, marginBottom: 8},
+  historyHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8},
+  historyDate: {fontSize: 12, color: '#666', fontWeight: '600'},
+  historyStatus: {fontSize: 11, fontWeight: '600'},
+  statusDone: {color: '#4caf50'},
+  statusDraft: {color: '#ff9800'},
+  historyField: {marginBottom: 6},
+  histFieldLabel: {fontSize: 12, fontWeight: '700', color: '#667eea', marginBottom: 2},
+  histFieldValue: {fontSize: 13, color: '#333', lineHeight: 19},
+  viewRxBtn: {backgroundColor: '#e3f2fd', padding: 8, borderRadius: 8, alignItems: 'center', marginTop: 6},
+  viewRxText: {fontSize: 13, color: '#1976d2', fontWeight: '600'},
+  // Form
+  inputGroup: {marginBottom: 20},
+  label: {fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 8},
+  input: {backgroundColor: '#fff', borderWidth: 2, borderColor: '#e0e0e0', borderRadius: 12, padding: 15, fontSize: 15, color: '#333'},
+  textArea: {minHeight: 120, paddingTop: 15},
+  textAreaSmall: {minHeight: 80, paddingTop: 15},
+  photoUpload: {borderWidth: 2, borderStyle: 'dashed', borderColor: '#667eea', borderRadius: 15, padding: 30, alignItems: 'center', backgroundColor: '#f8f9ff'},
+  uploadIcon: {fontSize: 40, marginBottom: 10},
+  uploadText: {color: '#667eea', fontSize: 14, fontWeight: '600'},
+  photoGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 15},
+  photoItem: {width: 80, height: 80, borderRadius: 10, backgroundColor: '#667eea', justifyContent: 'center', alignItems: 'center', position: 'relative'},
+  photoPlaceholder: {fontSize: 14, color: '#fff', fontWeight: '600'},
+  removePhotoBtn: {position: 'absolute', top: -8, right: -8, width: 22, height: 22, borderRadius: 11, backgroundColor: '#dc3545', justifyContent: 'center', alignItems: 'center'},
+  removePhotoText: {color: '#fff', fontSize: 14, fontWeight: 'bold'},
+  // Save button
+  saveButton: {backgroundColor: '#4caf50', borderRadius: 12, padding: 18, alignItems: 'center', marginBottom: 20},
+  saveButtonText: {color: '#fff', fontSize: 16, fontWeight: 'bold'},
+  buttonDisabled: {opacity: 0.6},
+  infoBox: {backgroundColor: '#fff3cd', borderRadius: 12, padding: 15, borderLeftWidth: 4, borderLeftColor: '#ffc107'},
+  infoText: {fontSize: 13, color: '#856404', lineHeight: 20},
+  // Prescription preview modal
+  previewModal: {flex: 1, backgroundColor: '#f5f7fa'},
+  previewHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#667eea'},
+  previewTitle: {fontSize: 18, fontWeight: 'bold', color: '#fff'},
+  previewClose: {color: '#fff', fontSize: 15, fontWeight: '600'},
+  previewBody: {padding: 20},
+  previewItem: {marginBottom: 20},
+  previewLabel: {fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 8},
+  previewImage: {width: '100%', height: 400, borderRadius: 12, backgroundColor: '#e0e0e0'},
+  noPhotosText: {textAlign: 'center', color: '#999', fontSize: 15, padding: 40},
 });
 
 export default ConsultationNotesScreen;
