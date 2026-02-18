@@ -21,6 +21,7 @@ import DoctorDashboardScreen from './src/screens/doctor/DoctorDashboardScreen';
 import DoctorCalendarScreen from './src/screens/doctor/DoctorCalendarScreen';
 import PatientDetailsScreen from './src/screens/doctor/PatientDetailsScreen';
 import AddScheduleScreen from './src/screens/doctor/AddScheduleScreen';
+import EditScheduleScreen from './src/screens/doctor/EditScheduleScreen';
 import ConsultationNotesScreen from './src/screens/doctor/ConsultationNotesScreen';
 import BlockDateScreen from './src/screens/doctor/BlockDateScreen';
 import DoctorProfileScreen from './src/screens/doctor/DoctorProfileScreen';
@@ -129,6 +130,11 @@ function App() {
             name="AddSchedule"
             component={AddScheduleScreen}
             options={{title: 'Add Schedule'}}
+          />
+          <Stack.Screen
+            name="EditSchedule"
+            component={EditScheduleScreen}
+            options={{title: 'Edit Schedule'}}
           />
           <Stack.Screen
             name="ConsultationNotes"
